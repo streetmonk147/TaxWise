@@ -1,0 +1,1088 @@
+# PayrollNG Pro - Development Flowchart & Reference Guide
+
+## PROJECT OVERVIEW
+**Product:** 2026 Tax-Compliant Payroll System for Nigerian Businesses
+**Timeline:** 30 Days
+**Tech Stack:** Next.js 14, TypeScript, Prisma, PostgreSQL, Tailwind CSS, shadcn/ui, Paystack
+
+---
+
+## PHASE 1: FOUNDATION & SETUP (Days 1-5)
+
+### 1.1 Initial Project Setup
+```
+START → Create Next.js 14 Project with TypeScript
+  ↓
+Install Dependencies:
+  - Prisma (database ORM)
+  - NextAuth (authentication)
+  - Tailwind CSS (styling)
+  - shadcn/ui (UI components)
+  - React Hook Form + Zod (forms & validation)
+  - recharts (charts)
+  - jsPDF (PDF generation)
+  - SheetJS (Excel export)
+  ↓
+Create Folder Structure:
+  /app/(auth) → login, register pages
+  /app/(dashboard) → main app pages
+  /components/ui → reusable UI components
+  /lib → utility functions
+  /prisma → database schema
+  ↓
+Configure Environment Variables:
+  DATABASE_URL
+  NEXTAUTH_SECRET
+  NEXTAUTH_URL
+  PAYSTACK_SECRET_KEY
+  PAYSTACK_PUBLIC_KEY
+```
+
+### 1.2 Database Schema Design
+```
+Create Prisma Schema with Tables:
+  ↓
+Companies Table:
+  - id (UUID)
+  - name (String)
+  - tin (String, 10 digits)
+  - email (String)
+  - phone (String)
+  - address (String)
+  - employee_count (Int)
+  - subscription_tier (Enum: FREE, STARTER, PRO, ENTERPRISE)
+  - subscription_expires_at (DateTime)
+  - created_at (DateTime)
+  ↓
+Employees Table:
+  - id (UUID)
+  - company_id (Foreign Key → Companies)
+  - full_name (String)
+  - tin (String, 10 digits)
+  - email (String)
+  - phone (String)
+  - basic_salary (Decimal)
+  - housing_allowance (Decimal)
+  - transport_allowance (Decimal)
+  - other_allowances (Decimal)
+  - employment_type (Enum: FULL_TIME, CONTRACT, PART_TIME)
+  - state_of_residence (String)
+  - start_date (DateTime)
+  - is_active (Boolean)
+  ↓
+PayrollRuns Table:
+  - id (UUID)
+  - company_id (Foreign Key → Companies)
+  - month (Int, 1-12)
+  - year (Int)
+  - status (Enum: DRAFT, PROCESSED, REMITTED)
+  - total_gross (Decimal)
+  - total_paye (Decimal)
+  - total_net (Decimal)
+  - created_at (DateTime)
+  ↓
+EmployeePayslips Table:
+  - id (UUID)
+  - payroll_run_id (Foreign Key → PayrollRuns)
+  - employee_id (Foreign Key → Employees)
+  - gross_pay (Decimal)
+  - basic_salary (Decimal)
+  - housing_allowance (Decimal)
+  - transport_allowance (Decimal)
+  - other_allowances (Decimal)
+  - paye (Decimal)
+  - pension_employee (Decimal, 8%)
+  - pension_employer (Decimal, 10%)
+  - nhf (Decimal, 2.5%)
+  - net_pay (Decimal)
+  - created_at (DateTime)
+  ↓
+Users Table:
+  - id (UUID)
+  - email (String)
+  - password (Hash)
+  - role (Enum: OWNER, ACCOUNTANT, EMPLOYEE)
+  - company_id (Foreign Key → Companies, nullable)
+  ↓
+Run: npx prisma migrate dev
+Run: npx prisma generate
+```
+
+### 1.3 Authentication System
+```
+Set up NextAuth:
+  ↓
+Create /app/api/auth/[...nextauth]/route.ts
+  - Configure credentials provider
+  - Hash passwords with bcrypt
+  - Create JWT session
+  ↓
+Create Login Page (/app/(auth)/login)
+  - Email + Password fields
+  - Form validation with Zod
+  - Error handling
+  - "Register" link
+  ↓
+Create Register Page (/app/(auth)/register)
+  - Company name
+  - Email
+  - Password
+  - Confirm password
+  - TIN (optional at signup)
+  - Create company + owner user on submit
+  ↓
+Create Middleware (middleware.ts)
+  - Protect /dashboard routes
+  - Redirect unauthenticated users to /login
+  - Redirect authenticated users away from /login
+```
+
+### 1.4 2026 PAYE Calculator Engine
+```
+Create /lib/paye-calculator.ts:
+  ↓
+Input: Annual Gross Salary (Number)
+  ↓
+Apply 2026 Tax Brackets (Progressive):
+  IF salary ≤ ₦800,000 → Tax = 0
+  IF ₦800,001 - ₦2,200,000 → Tax = 7% on amount above ₦800,000
+  IF ₦2,200,001 - ₦8,999,000 → Tax = ₦98,000 + 15% on amount above ₦2,200,000
+  IF ₦9,000,000 - ₦12,999,000 → Tax = ₦1,117,850 + 18% on amount above ₦9,000,000
+  IF ₦13,000,000 - ₦24,999,000 → Tax = ₦1,837,820 + 21% on amount above ₦13,000,000
+  IF ₦25,000,000 - ₦49,999,000 → Tax = ₦4,357,790 + 23% on amount above ₦25,000,000
+  IF ₦50,000,000+ → Tax = ₦10,107,710 + 25% on amount above ₦50,000,000
+  ↓
+Return: {
+  annual_gross: Number,
+  annual_tax: Number,
+  monthly_tax: Number (annual_tax / 12),
+  effective_rate: Percentage
+}
+  ↓
+Test Cases:
+  ✓ ₦500,000/year → ₦0 tax
+  ✓ ₦1,000,000/year → ₦14,000 tax
+  ✓ ₦5,000,000/year → ₦518,000 tax
+  ✓ ₦10,000,000/year → ₦1,297,850 tax
+  ✓ ₦50,000,000/year → ₦10,107,710 tax
+```
+
+### 1.5 Statutory Deductions Calculator
+```
+Create /lib/deductions-calculator.ts:
+  ↓
+Input: {
+  basic_salary: Number,
+  housing_allowance: Number,
+  transport_allowance: Number,
+  other_allowances: Number
+}
+  ↓
+Calculate:
+  gross_pay = basic + housing + transport + other
+  ↓
+  pension_employee = basic_salary × 8%
+  pension_employer = basic_salary × 10%
+  ↓
+  nhf = basic_salary × 2.5%
+  ↓
+  annual_gross = gross_pay × 12
+  annual_paye = calculatePAYE(annual_gross)
+  monthly_paye = annual_paye / 12
+  ↓
+  net_pay = gross_pay - pension_employee - nhf - monthly_paye
+  ↓
+Return: {
+  gross_pay: Number,
+  paye: Number,
+  pension_employee: Number,
+  pension_employer: Number,
+  nhf: Number,
+  net_pay: Number,
+  total_employer_cost: gross_pay + pension_employer
+}
+```
+
+---
+
+## PHASE 2: EMPLOYEE MANAGEMENT (Days 6-8)
+
+### 2.1 Employee CRUD Operations
+```
+Create /app/(dashboard)/employees/page.tsx:
+  ↓
+Display Employee List:
+  - Table with columns: Name, TIN, Email, Basic Salary, Status
+  - Search by name/email
+  - Filter by status (Active/Inactive)
+  - "Add Employee" button
+  ↓
+Create /app/(dashboard)/employees/new/page.tsx:
+  ↓
+Employee Form Fields:
+  - Full Name* (required)
+  - TIN* (10 digits, validate format)
+  - Email*
+  - Phone
+  - Basic Salary* (₦)
+  - Housing Allowance (₦)
+  - Transport Allowance (₦)
+  - Other Allowances (₦)
+  - Employment Type (dropdown: Full-time, Contract, Part-time)
+  - State of Residence (dropdown: Lagos, Abuja, etc.)
+  - Start Date*
+  ↓
+On Submit:
+  → Validate all fields with Zod
+  → Insert into Employees table
+  → Increment company employee_count
+  → Show success message
+  → Redirect to employees list
+  ↓
+Create /app/(dashboard)/employees/[id]/edit/page.tsx:
+  - Same form, pre-filled with existing data
+  - Update employee record on submit
+  ↓
+Add Delete Employee:
+  - Set is_active = false (soft delete)
+  - Decrement company employee_count
+  - Confirm before delete
+```
+
+### 2.2 Bulk Employee Import
+```
+Create CSV Upload Feature:
+  ↓
+Upload CSV with columns:
+  Full Name, TIN, Email, Phone, Basic Salary, Housing, Transport, Other, Employment Type, State, Start Date
+  ↓
+Parse CSV using Papaparse:
+  → Validate each row
+  → Show preview table with validation errors
+  → User can fix errors or skip invalid rows
+  ↓
+On Confirm:
+  → Bulk insert valid employees into database
+  → Show summary: X successful, Y failed
+```
+
+---
+
+## PHASE 3: PAYROLL PROCESSING (Days 9-12)
+
+### 3.1 Monthly Payroll Run
+```
+Create /app/(dashboard)/payroll/run/page.tsx:
+  ↓
+User Selects:
+  - Month (dropdown: January - December)
+  - Year (dropdown: 2026, 2027, etc.)
+  ↓
+Click "Run Payroll" Button:
+  ↓
+Backend Process (API Route: /api/payroll/run):
+  1. Check if payroll already exists for this month/year
+     → If exists, show error: "Payroll already processed for this period"
+  ↓
+  2. Fetch all active employees for company
+  ↓
+  3. For each employee:
+     → Calculate gross_pay (basic + housing + transport + other)
+     → Calculate annual equivalent (gross_pay × 12)
+     → Calculate PAYE using paye-calculator.ts
+     → Calculate pension_employee (basic × 8%)
+     → Calculate pension_employer (basic × 10%)
+     → Calculate NHF (basic × 2.5%)
+     → Calculate net_pay (gross - paye - pension_employee - nhf)
+  ↓
+  4. Create PayrollRun record:
+     - month, year, status = 'PROCESSED'
+     - total_gross = sum of all gross_pay
+     - total_paye = sum of all paye
+     - total_net = sum of all net_pay
+  ↓
+  5. Create EmployeePayslip records (bulk insert)
+  ↓
+  6. Return payroll_run_id
+  ↓
+Frontend:
+  → Show loading spinner during processing
+  → On success, redirect to payroll summary page
+  → Display summary card:
+    - Total Employees Processed: X
+    - Total Gross Pay: ₦X,XXX,XXX
+    - Total PAYE Deducted: ₦XXX,XXX
+    - Total Net Pay: ₦X,XXX,XXX
+  → Show employee breakdown table
+```
+
+### 3.2 Payslip Generation (PDF)
+```
+Create /lib/payslip-generator.ts using jsPDF:
+  ↓
+Input: EmployeePayslip data + Employee data + Company data
+  ↓
+PDF Template Layout:
+  ┌─────────────────────────────────────┐
+  │ [Company Logo]   PAYSLIP            │
+  │ Company Name                        │
+  │ Company TIN: XXXXXXXXXX             │
+  │                                     │
+  │ Employee: John Doe                  │
+  │ TIN: XXXXXXXXXX                     │
+  │ Month: January 2026                 │
+  │                                     │
+  │ EARNINGS                  AMOUNT    │
+  │ Basic Salary           ₦XXX,XXX.XX  │
+  │ Housing Allowance      ₦XXX,XXX.XX  │
+  │ Transport Allowance    ₦XXX,XXX.XX  │
+  │ Other Allowances       ₦XXX,XXX.XX  │
+  │ ─────────────────────────────────   │
+  │ Gross Pay              ₦XXX,XXX.XX  │
+  │                                     │
+  │ DEDUCTIONS                          │
+  │ PAYE Tax              ₦XXX,XXX.XX   │
+  │ Pension (8%)          ₦XXX,XXX.XX   │
+  │ NHF (2.5%)            ₦XX,XXX.XX    │
+  │ ─────────────────────────────────   │
+  │ Total Deductions      ₦XXX,XXX.XX   │
+  │                                     │
+  │ NET PAY               ₦XXX,XXX.XX   │
+  │                                     │
+  │ Employer Contributions:             │
+  │ Pension (10%)         ₦XXX,XXX.XX   │
+  └─────────────────────────────────────┘
+  ↓
+Create API Route: /api/payslips/[id]/download
+  → Generate PDF
+  → Return as blob
+  ↓
+Add Download Buttons:
+  - Individual payslip download
+  - Bulk download all payslips (ZIP file)
+```
+
+### 3.3 PAYE Schedule Report
+```
+Create /app/(dashboard)/reports/paye-schedule/page.tsx:
+  ↓
+User Selects:
+  - Month
+  - Year
+  ↓
+Generate PAYE Schedule Table:
+  ┌────┬──────────────┬────────────┬──────────────┬────────────┬─────────────┐
+  │ S/N│ Employee Name│ TIN        │ Gross Income │ PAYE Tax   │ Net Pay     │
+  ├────┼──────────────┼────────────┼──────────────┼────────────┼─────────────┤
+  │ 1  │ John Doe     │ 1234567890 │ ₦500,000.00  │ ₦45,000.00 │ ₦415,000.00 │
+  │ 2  │ Jane Smith   │ 0987654321 │ ₦750,000.00  │ ₦78,000.00 │ ₦622,000.00 │
+  │... │ ...          │ ...        │ ...          │ ...        │ ...         │
+  ├────┴──────────────┴────────────┴──────────────┴────────────┴─────────────┤
+  │ TOTAL:                          │ ₦XX,XXX,XXX  │ ₦X,XXX,XXX │ ₦XX,XXX,XXX │
+  └─────────────────────────────────┴──────────────┴────────────┴─────────────┘
+  ↓
+Export Options:
+  1. Export to Excel (.xlsx) using SheetJS
+  2. Export to PDF using jsPDF
+  ↓
+File naming: PAYE_Schedule_CompanyName_MMM_YYYY.xlsx
+```
+
+---
+
+## PHASE 4: COMPLIANCE & REPORTING (Days 13-16)
+
+### 4.1 Remittance Tracker Dashboard
+```
+Create /app/(dashboard)/compliance/page.tsx:
+  ↓
+Display Compliance Calendar:
+  ↓
+Tax Obligations Table:
+  ┌────────────┬──────────┬─────────────┬──────────┬──────────┐
+  │ Month/Year │ Type     │ Amount      │ Due Date │ Status   │
+  ├────────────┼──────────┼─────────────┼──────────┼──────────┤
+  │ Jan 2026   │ PAYE     │ ₦1,500,000  │ Feb 10   │ 🔴 Overdue│
+  │ Jan 2026   │ Pension  │ ₦800,000    │ Feb 15   │ ⚠️ Pending│
+  │ Jan 2026   │ NHF      │ ₦200,000    │ Feb 15   │ ✅ Remitted│
+  │ Jan 2026   │ NSITF    │ ₦50,000     │ Feb 15   │ ⚠️ Pending│
+  └────────────┴──────────┴─────────────┴──────────┴──────────┘
+  ↓
+Upcoming Deadlines Alert Box:
+  "⚠️ URGENT: PAYE payment due in 5 days (Feb 10)"
+  "⏰ Pension remittance due in 10 days (Feb 15)"
+  ↓
+For each obligation, add:
+  - "Mark as Remitted" button
+  - Date remitted input field
+  - Receipt upload (optional)
+  ↓
+Visual Indicators:
+  - Red: Overdue (past due date)
+  - Yellow: Due within 7 days
+  - Green: Remitted
+  - Gray: Future obligation
+```
+
+### 4.2 Tax Clearance Certificate (TCC) Tracker
+```
+Add to Company Profile:
+  ↓
+TCC Fields:
+  - TCC Number (String)
+  - Issue Date (Date)
+  - Expiry Date (Date)
+  - Upload TCC Document (PDF)
+  ↓
+Display in Dashboard:
+  - Days until expiry counter
+  - Alert if expiring within 30 days
+  ↓
+Renewal Checklist:
+  □ File all outstanding PAYE returns
+  □ Clear all tax liabilities
+  □ Submit audited financial statements
+  □ Pay application fee (₦25,000 for small companies)
+  □ Visit FIRS office or apply online
+```
+
+### 4.3 Annual Returns Generator
+```
+Create /app/(dashboard)/reports/annual-returns/page.tsx:
+  ↓
+User Selects Year (e.g., 2026)
+  ↓
+For Each Employee:
+  → Query all payslips for that year
+  → Calculate:
+    - Total Gross Income (sum of all gross_pay)
+    - Total PAYE Deducted (sum of all paye)
+    - Total Pension Employee (sum of pension_employee)
+    - Total Pension Employer (sum of pension_employer)
+    - Total NHF (sum of nhf)
+  ↓
+Calculate Reliefs:
+  - Consolidated Relief Allowance = Higher of (20% of gross income OR ₦200,000)
+  - Plus additional ₦200,000
+  ↓
+Generate Individual Employee Annual Statement (PDF):
+  - Employee details
+  - Month-by-month breakdown table
+  - Annual totals
+  - Reliefs applied
+  ↓
+Generate Company Consolidated Return (Excel):
+  - All employees summary
+  - Total company tax burden
+  - Export for filing with FIRS
+```
+
+---
+
+## PHASE 5: DASHBOARD & UX (Days 17-19)
+
+### 5.1 Main Dashboard
+```
+Create /app/(dashboard)/page.tsx:
+  ↓
+Top Row - Key Metrics (4 Cards):
+  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+  │ Total Employees  │ │ Monthly Payroll  │ │ Total PAYE       │ │ Next Deadline    │
+  │                  │ │                  │ │                  │ │                  │
+  │      125         │ │  ₦12,500,000     │ │  ₦1,850,000      │ │  Feb 10, 2026    │
+  │  +5 this month   │ │  +8% vs last mo  │ │  Due in 15 days  │ │  PAYE Remittance │
+  └──────────────────┘ └──────────────────┘ └──────────────────┘ └──────────────────┘
+  ↓
+Middle Section - Charts (2 columns):
+  Left: Line Chart - "Payroll Trend (Last 6 Months)"
+    X-axis: Months (Aug, Sep, Oct, Nov, Dec, Jan)
+    Y-axis: Amount (₦)
+    Lines: Total Payroll, PAYE, Net Pay
+  ↓
+  Right: Pie Chart - "Tax Breakdown (This Month)"
+    Segments:
+    - PAYE (largest slice)
+    - Pension
+    - NHF
+    - Other
+  ↓
+Bottom Section - Quick Actions & Recent Activity:
+  Quick Actions:
+    [Run Payroll] [Add Employee] [View Reports] [Compliance]
+  ↓
+  Recent Payroll Runs Table:
+    Month/Year | Employees | Gross Pay | PAYE | Status | Actions
+    Jan 2026   | 125       | ₦12.5M    | ₦1.8M| ✅     | [View] [Download]
+```
+
+### 5.2 Employee Self-Service Portal
+```
+Create Separate Employee Login Flow:
+  ↓
+Employee Dashboard (/app/(employee)/dashboard):
+  ↓
+Display:
+  - Welcome message with employee name
+  - Current month's payslip preview
+  - Year-to-date summary:
+    • Total Earnings: ₦XXX,XXX
+    • Total PAYE Paid: ₦XX,XXX
+    • Total Take-home: ₦XXX,XXX
+  ↓
+Payslips History:
+  - List of all months employee has payslips
+  - Click to view payslip details
+  - Download button for each payslip
+  ↓
+Request Feature:
+  - "Request Payslip Correction" button
+  - Opens form: What needs correction? Message to employer
+  - Sends notification to company owner
+```
+
+### 5.3 Public PAYE Calculator (Landing Page Tool)
+```
+Create /calculator (public, no login required):
+  ↓
+Calculator Interface:
+  ┌─────────────────────────────────────────────┐
+  │  Nigeria PAYE Calculator 2026               │
+  │                                             │
+  │  Annual Gross Salary: [₦________]           │
+  │  (or enter monthly: [₦________] × 12)       │
+  │                                             │
+  │  Basic Salary %: [60%] (optional)           │
+  │                                             │
+  │  [Calculate Tax] Button                     │
+  │                                             │
+  │  Results:                                   │
+  │  ─────────────────────────────────────────  │
+  │  Monthly Breakdown:                         │
+  │  • Gross Pay: ₦XXX,XXX                      │
+  │  • PAYE Tax: ₦XX,XXX (X.X%)                 │
+  │  • Pension (8%): ₦XX,XXX                    │
+  │  • NHF (2.5%): ₦X,XXX                       │
+  │  • Net Pay: ₦XXX,XXX                        │
+  │                                             │
+  │  Annual Summary:                            │
+  │  • Total Tax: ₦XXX,XXX                      │
+  │  • Effective Rate: X.X%                     │
+  │  • Take-home: ₦X,XXX,XXX                    │
+  │                                             │
+  │  [Save Calculation] → Prompts signup        │
+  │  [Share Results] → Copy link                │
+  └─────────────────────────────────────────────┘
+  ↓
+SEO Optimization:
+  - Meta title: "Nigeria PAYE Calculator 2026 | Free Tax Calculator"
+  - Meta description: "Calculate your PAYE tax under Nigeria's new 2026 tax law"
+  - Keywords: Nigeria PAYE, tax calculator, 2026 tax rates
+```
+
+---
+
+## PHASE 6: MONETIZATION (Days 20-22)
+
+### 6.1 Subscription System
+```
+Define Plans in Database (enum):
+  FREE: 5 employees max, 3 months history
+  STARTER: 25 employees, ₦20,000/month
+  PROFESSIONAL: 100 employees, ₦50,000/month
+  ENTERPRISE: Unlimited, ₦150,000/month
+  ↓
+Create /app/(dashboard)/settings/subscription/page.tsx:
+  ↓
+Show Current Plan Card:
+  ┌─────────────────────────────────────┐
+  │ Current Plan: STARTER               │
+  │ 12 of 25 employees used             │
+  │ Next billing: Feb 15, 2026          │
+  │ Amount: ₦20,000                     │
+  │ [Upgrade Plan] [Cancel]             │
+  └─────────────────────────────────────┘
+  ↓
+Pricing Cards (4 columns):
+  Each card shows:
+  - Plan name
+  - Price
+  - Features list
+  - Employee limit
+  - [Select Plan] button
+  ↓
+Enforce Limits:
+  - Check employee count before adding new employee
+  - If at limit, show upgrade prompt
+  - Block payroll run if over limit
+```
+
+### 6.2 Paystack Integration
+```
+Install: npm install @paystack/inline-js
+  ↓
+Create Checkout Flow:
+  ↓
+When user clicks [Upgrade Plan]:
+  1. Redirect to /checkout?plan=STARTER
+  ↓
+  2. Show checkout page with:
+     - Plan details
+     - Amount
+     - Payment frequency (Monthly/Annual - 15% discount)
+  ↓
+  3. Click [Pay Now]:
+     → Initialize Paystack Popup:
+       email: user email
+       amount: plan price × 100 (kobo)
+       reference: generate unique ref
+       callback_url: /api/payment/verify
+  ↓
+  4. User completes payment on Paystack
+  ↓
+  5. Paystack redirects to callback_url with reference
+  ↓
+  6. Backend verifies payment:
+     → Call Paystack API: GET /transaction/verify/:reference
+     → If successful:
+       - Update company subscription_tier
+       - Set subscription_expires_at = now + 30 days
+       - Create payment record
+       - Send confirmation email
+  ↓
+  7. Redirect to dashboard with success message
+  ↓
+Set up Webhook (for recurring payments):
+  - Endpoint: /api/webhooks/paystack
+  - Listen for: charge.success, subscription.create, subscription.disable
+  - Verify webhook signature
+  - Update subscription status accordingly
+```
+
+### 6.3 Free Trial & Onboarding
+```
+After Registration:
+  → Set subscription_tier = FREE
+  → Set trial_ends_at = now + 14 days
+  → Show onboarding modal
+  ↓
+Onboarding Steps (Modal with progress bar):
+  ↓
+Step 1: Company Details
+  - Prefilled: name, email (from registration)
+  - Add: TIN, address, phone, industry
+  - [Next]
+  ↓
+Step 2: Add First Employees
+  - Option 1: Manually add 3 employees
+  - Option 2: "Skip with sample data" (loads demo employees)
+  - [Next]
+  ↓
+Step 3: Run Demo Payroll
+  - Auto-select current month
+  - [Run Payroll] button
+  - Show processing → Success!
+  ↓
+Step 4: View Payslips
+  - Display first employee's payslip preview
+  - [Download] button
+  ↓
+Step 5: Completion
+  - "🎉 Congratulations! Your payroll system is ready"
+  - "You're on a 14-day free trial"
+  - [Go to Dashboard]
+  ↓
+Trial Expiry Logic:
+  - Show countdown in header: "Trial expires in X days"
+  - 3 days before expiry: Show upgrade prompt
+  - On expiry: Lock features, show "Upgrade to Continue"
+```
+
+---
+
+## PHASE 7: DEPLOYMENT (Days 23-25)
+
+### 7.1 Production Setup
+```
+Deploy to Vercel:
+  ↓
+1. Connect GitHub repo to Vercel
+  ↓
+2. Configure Build Settings:
+   - Framework: Next.js
+   - Build Command: npm run build
+   - Output Directory: .next
+  ↓
+3. Add Environment Variables:
+   DATABASE_URL = postgresql://...  (Vercel Postgres)
+   NEXTAUTH_SECRET = [generate secure string]
+   NEXTAUTH_URL = https://yourdomain.com
+   PAYSTACK_SECRET_KEY = sk_live_...
+   PAYSTACK_PUBLIC_KEY = pk_live_...
+  ↓
+4. Set up Vercel Postgres:
+   → Create database
+   → Copy connection string to DATABASE_URL
+   → Run: npx prisma migrate deploy
+  ↓
+5. Configure Custom Domain:
+   → Add domain in Vercel settings
+   → Update DNS records (A, CNAME)
+   → Enable SSL (automatic)
+  ↓
+6. Enable Production Features:
+   → Vercel Analytics
+   → Vercel Speed Insights
+   → Error monitoring (optional: Sentry)
+```
+
+### 7.2 Testing Checklist
+```
+Manual Testing:
+  ↓
+Authentication:
+  □ Register new company
+  □ Login with correct credentials
+  □ Login fails with wrong password
+  □ Logout works
+  □ Protected routes redirect to login
+  ↓
+Employee Management:
+  □ Add employee with valid data
+  □ Add employee fails with invalid TIN
+  □ Edit employee details
+  □ Soft delete employee
+  □ Bulk import from CSV
+  ↓
+Payroll Processing:
+  □ Run payroll for current month
+  □ Verify PAYE calculations (test all tax brackets)
+  □ Verify pension calculations (8% employee, 10% employer)
+  □ Verify NHF calculation (2.5%)
+  □ Generate payslips (PDF download works)
+  □ Export PAYE schedule (Excel + PDF)
+  ↓
+Compliance:
+  □ Remittance tracker shows correct deadlines
+  □ Mark obligation as remitted
+  □ TCC expiry alerts work
+  ↓
+Payments:
+  □ Upgrade to paid plan
+  □ Payment successful → subscription updated
+  □ Trial expires → features locked
+  ↓
+Employee Portal:
+  □ Employee can login
+  □ Employee sees only their payslips
+  □ Employee can download payslips
+  ↓
+Public Calculator:
+  □ PAYE calculations accurate
+  □ Save calculation prompts signup
+```
+
+### 7.3 Launch Landing Page
+```
+Create Marketing Site (/app/(marketing)):
+  ↓
+Landing Page Structure:
+  ↓
+Hero Section:
+  - Headline: "Never Miss Another PAYE Deadline Again"
+  - Subheadline: "Nigeria's #1 2026 Tax-Compliant Payroll Software"
+  - CTA: [Start 14-Day Free Trial] [Calculate Your Tax]
+  - Hero image/screenshot
+  ↓
+Problem Section:
+  - "Confused by the new 2026 tax law?"
+  - Pain points: Complex calculations, deadline stress, penalty fears
+  ↓
+Solution Section:
+  - "PayrollNG Pro handles everything automatically"
+  - Feature highlights with icons:
+    ✓ Accurate 2026 PAYE calculations
+    ✓ Automatic payslip generation
+    ✓ Compliance deadline tracking
+    ✓ FIRS-ready reports
+  ↓
+How It Works (3 Steps):
+  1. Add your employees
+  2. Run monthly payroll (1 click)
+  3. Download reports & payslips
+  ↓
+Pricing Preview:
+  - "From ₦20,000/month for 25 employees"
+  - [See Full Pricing]
+  ↓
+Free Calculator Section:
+  - Embedded PAYE calculator
+  - "Try our free calculator now"
+  ↓
+Testimonials:
+  - 3-4 customer quotes (add after beta)
+  ↓
+FAQ Section:
+  Q: Is this compliant with 2026 tax law?
+  A: Yes, fully updated with latest PAYE brackets.
+  
+  Q: Can I import existing employees?
+  A: Yes, bulk CSV import supported.
+  
+  Q: What if I miss a deadline?
+  A: We send reminders 7 days before due date.
+  ↓
+Footer:
+  - Company info
+  - Links: Pricing, Features, Contact, Privacy, Terms
+  - Social media icons
+  ↓
+SEO Setup:
+  - Title: "PayrollNG Pro | 2026 Tax-Compliant Payroll Software Nigeria"
+  - Description: "Automated payroll with accurate PAYE, pension, NHF calculations. FIRS-compliant reports. Free 14-day trial."
+  - Keywords: Nigeria payroll software, PAYE calculator, 2026 tax compliance
+```
+
+---
+
+## PHASE 8: GROWTH FEATURES (Days 26-30)
+
+### 8.1 WhatsApp Integration (Optional)
+```
+Set up Twilio WhatsApp API:
+  ↓
+Features:
+  - Send payslips via WhatsApp
+  - Send deadline reminders
+  - Bulk payslip distribution
+  ↓
+Add WhatsApp number field to Employee table
+  ↓
+Create Notification Settings:
+  □ Send payslips via WhatsApp
+  □ Send compliance reminders
+  □ Send payment confirmations
+```
+
+### 8.2 Tax Updates Feed
+```
+Create /app/(dashboard)/tax-updates/page.tsx:
+  ↓
+Display:
+  - Latest FIRS announcements
+  - Tax law changes
+  - Compliance tips
+  ↓
+Admin can post updates:
+  - Title
+  - Content
+  - Date
+  - Tags (PAYE, VAT, etc.)
+  ↓
+Show notification badge when new updates
+```
+
+### 8.3 Accountant Collaboration
+```
+Add Role: ACCOUNTANT
+  ↓
+Company Owner can:
+  - Invite accountant via email
+  - Grant read-only access
+  ↓
+Accountant Login:
+  - See list of all client companies
+  - Switch between clients
+  - View all payroll data
+  - Download reports
+  - Cannot edit/delete
+  ↓
+Permissions Matrix:
+  OWNER: Full access
+  ACCOUNTANT: Read-only
+  EMPLOYEE: Own data only
+```
+
+---
+
+## DEPLOYMENT CHECKLIST
+
+```
+Pre-Launch:
+  □ All environment variables set
+  □ Database migrations run
+  □ SSL certificate active
+  □ Custom domain configured
+  □ Payment webhooks tested
+  □ Email notifications working
+  □ Error tracking enabled
+  □ Analytics installed
+  ↓
+Launch Day:
+  □ Announce on LinkedIn
+  □ Post in Nairaland forums
+  □ Email 20 beta testers
+  □ Share on WhatsApp status
+  □ Google Ads campaign live
+  ↓
+Post-Launch (Week 1):
+  □ Monitor error logs daily
+  □ Respond to support queries
+  □ Collect user feedback
+  □ Fix critical bugs
+  □ Add testimonials to landing page
+```
+
+---
+
+## REVENUE PROJECTIONS
+
+```
+Month 1 (Beta):
+  10 companies × ₦0 (free beta) = ₦0
+  ↓
+Month 2 (Soft Launch):
+  50 signups
+  30 convert to Starter (₦20k) = ₦600,000
+  5 convert to Pro (₦50k) = ₦250,000
+  TOTAL: ₦850,000
+  ↓
+Month 3 (Growth):
+  150 total companies
+  80 Starter = ₦1,600,000
+  20 Pro = ₦1,000,000
+  5 Enterprise = ₦750,000
+  TOTAL: ₦3,350,000
+  ↓
+Month 6 Target:
+  300-500 companies
+  ₦5-10 million MRR
+```
+
+---
+
+## SUCCESS METRICS
+
+```
+Track These KPIs:
+  - User signups (daily)
+  - Trial-to-paid conversion rate (target: 25%+)
+  - Monthly Active Users (MAU)
+  - Average payroll runs per company
+  - Customer churn rate (target: <5%)
+  - Customer support tickets
+  - Net Promoter Score (NPS)
+```
+
+---
+
+## CRITICAL REMINDERS
+
+```
+1. PAYE Calculation Accuracy:
+   - Test with salary ranges: ₦500k, ₦1M, ₦5M, ₦10M, ₦50M
+   - Cross-verify with FIRS tax tables
+   - Add calculator tests in /lib/__tests__/
+  ↓
+2. Data Security:
+   - Never log passwords
+   - Hash all sensitive data
+   - Use HTTPS only
+   - Implement rate limiting
+  ↓
+3. User Experience:
+   - Show loading states
+   - Clear error messages
+   - Mobile-responsive (test on 320px width)
+   - Fast page loads (<2 seconds)
+  ↓
+4. Compliance:
+   - Keep tax brackets updated
+   - Monitor FIRS for law changes
+   - Update calculator immediately if rates change
+  ↓
+5. Customer Support:
+   - Respond to queries within 24 hours
+   - Create knowledge base / FAQ
+   - Consider live chat (Intercom/Tawk.to)
+```
+
+---
+
+## TECH STACK REFERENCE
+
+```
+Frontend:
+  ├─ Next.js 14 (App Router)
+  ├─ TypeScript
+  ├─ Tailwind CSS
+  └─ shadcn/ui components
+
+Backend:
+  ├─ Next.js API Routes
+  ├─ Prisma ORM
+  └─ PostgreSQL (Vercel Postgres)
+
+Integrations:
+  ├─ Paystack (payments)
+  ├─ jsPDF (PDF generation)
+  ├─ SheetJS (Excel export)
+  ├─ NextAuth (authentication)
+  └─ Papaparse (CSV parsing)
+
+Deployment:
+  ├─ Vercel (hosting)
+  ├─ Vercel Postgres (database)
+  └─ Custom domain + SSL
+```
+
+---
+
+## NEXT STEPS AFTER LAUNCH
+
+```
+Phase 9 (Month 2-3):
+  - Multi-currency support (USD, GBP for diaspora)
+  - Loan management module
+  - Leave/attendance tracking
+  - API for third-party integrations
+  ↓
+Phase 10 (Month 4-6):
+  - Mobile app (React Native)
+  - Biometric attendance
+  - HR document management
+  - Performance review module
+  ↓
+Long-term Vision:
+  - Become full HRIS platform
+  - Partner with banks for salary advances
+  - Integrate with pension administrators
+  - Expand to other African countries
+```
+
+---
+
+## EMERGENCY CONTACTS & RESOURCES
+
+```
+Support Resources:
+  - FIRS Official Website: https://www.firs.gov.ng
+  - FIRS PAYE Tax Tables: Check for latest rates
+  - Paystack Documentation: https://paystack.com/docs
+  - Next.js Docs: https://nextjs.org/docs
+  - Prisma Docs: https://www.prisma.io/docs
+  
+Development Tools:
+  - Cursor AI: Use for code generation
+  - GitHub: Version control
+  - Vercel: Deployment platform
+  - Postman: API testing
+```
+
+---
+
+**END OF FLOWCHART**
+
+Save this document as `PROJECT_GUIDE.md` in your project root.
+Reference it whenever building features or if you get stuck.
+
+Good luck building PayrollNG Pro! 🚀
